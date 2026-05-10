@@ -1,0 +1,36 @@
+{
+    "models": {
+        "claude": "claude-haiku-4-5-20251001",
+        "deepseek": "deepseek-chat"
+    },
+    "routing": {
+        "claude_tasks": [
+            "analyze",
+            "strategy",
+            "recon",
+            "fingerprint",
+            "prioritize"
+        ],
+        "deepseek_tasks": [
+            "payload",
+            "exploit",
+            "bypass",
+            "reverse_shell",
+            "brute"
+        ]
+    },
+    "display": {
+        "theme": "dark",
+        "show_raw_output": false,
+        "max_history_display": 10
+    },
+    "session": {
+        "storage_dir": "sessions/",
+        "auto_save": true
+    },
+    "limits": {
+        "max_tokens_claude": 1024,
+        "max_tokens_deepseek": 2048,
+        "context_max_chars": 8000
+    }
+}
