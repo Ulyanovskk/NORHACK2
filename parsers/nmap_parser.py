@@ -37,13 +37,17 @@ class NmapParser:
                         "accuracy": osmatch.get("accuracy", "")
                     })
 
+            ports = []
             for port in host.findall(".//port"):
+                state_el = port.find("state")
+                service_el = port.find("service")
+                
                 ports.append({
                     "port": port.get("portid"),
                     "protocol": port.get("protocol"),
-                    "state": port.find("state").get("state"),
-                    "service": port.find("service").get("name") if port.find("service") is not None else "",
-                    "version": port.find("service").get("product", "") if port.find("service") is not None else ""
+                    "state": state_el.get("state") if state_el is not None else "unknown",
+                    "service": service_el.get("name", "") if service_el is not None else "",
+                    "version": service_el.get("product", "") if service_el is not None else ""
                 })
 
             result["hosts"].append({
@@ -51,6 +55,7 @@ class NmapParser:
                 "os": os_matches[0]["name"] if os_matches else "unknown",
                 "open_ports": [p for p in ports if p["state"] == "open"]
             })
+
 
         return result
 
