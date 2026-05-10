@@ -29,19 +29,32 @@ chmod +x install.sh
 ./install.sh
 ```
 
-## 📖 Utilisation
+## 📖 Modes d'Utilisation
 
-**Mode Wrapper :**
-```bash
-hack nmap -sV -A <target>
-```
+NORHACK propose trois modes principaux pour s'adapter à votre workflow de pentest :
 
-**Mode Pipe :**
-```bash
-gobuster dir -u <url> -w <wordlist> | hack
-```
+### 1. Mode Wrapper (L'enveloppe)
+L'assistant lance la commande réelle pour vous et intercepte le résultat.
+- **Usage** : `hack <outil> [arguments]`
+- **Exemple** : `hack nmap -sV -p- 10.10.10.123`
+- **Avantage** : Vous voyez l'output en direct, et l'IA analyse tout automatiquement à la fin (ports, versions, vulnérabilités).
 
-**Mode Interactif :**
-```bash
-hack shell
-```
+### 2. Mode Pipe (Le tuyau)
+Idéal pour analyser l'output d'une commande que vous avez déjà personnalisée ou lancée.
+- **Usage** : `commande | hack`
+- **Exemple** : `gobuster dir -u http://target.com -w common.txt | hack`
+- **Avantage** : Permet d'intégrer NORHACK dans n'importe quel script ou chaine de commandes.
+
+### 3. Mode Interactif (Le Shell)
+Discutez directement avec votre assistant IA en utilisant tout le contexte accumulé.
+- **Usage** : `hack shell`
+- **Avantage** : L'IA connaît déjà tous les ports ouverts, les services et les vulnérabilités trouvés précédemment. Vous pouvez lui demander des payloads spécifiques ou des conseils stratégiques basés sur la surface d'attaque actuelle.
+
+---
+
+## 📂 Gestion des Sessions
+NORHACK garde une trace de chaque cible pour enrichir le contexte des LLM.
+- `hack target <IP>` : Définit la cible actuelle.
+- `hack session` : Affiche le résumé de la surface d'attaque trouvée (ports, vulns).
+- `hack sessions` : Liste l'historique de toutes vos cibles scannées.
+
