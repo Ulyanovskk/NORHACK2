@@ -148,14 +148,16 @@ def pipe_mode(session: Session):
 
 
 def interactive_shell(session: Session):
-    """Mode shell interactif — pose des questions libres."""
+    """Mode shell interactif — pose des questions libres ou exécute des outils."""
     display.banner()
     display.session_summary(session.data)
-    display.info("Mode shell interactif. 'exit' pour quitter.")
+    display.info("Mode shell interactif. Tape 'exit' pour quitter ou '!' pour lancer une commande.")
+    display.info("Exemple : !nmap -sV 10.10.10.123")
 
     while True:
         try:
-            question = input("\n[hack]> ").strip()
+            prompt_target = session.target if session.target != "unknown" else "no-target"
+            question = input(f"\n[hack][{prompt_target}]> ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -164,6 +166,15 @@ def interactive_shell(session: Session):
             break
 
         if not question:
+            continue
+
+        # MODE COMMANDE DIRECTE (commence par !)
+        if question.startswith("!"):
+            cmd_parts = question[1:].split()
+            if cmd_parts:
+                tool = cmd_parts[0]
+                args = cmd_parts[1:]
+                wrapper_mode(tool, args, session)
             continue
 
         context = session.get_context_summary()
@@ -205,6 +216,9 @@ def main():
 
     # Commandes internes
     if cmd == "shell":
+        if len(sys.argv) >= 3:
+            target = sys.argv[2]
+            session = get_or_create_session(target)
         interactive_shell(session)
 
     elif cmd == "session":
