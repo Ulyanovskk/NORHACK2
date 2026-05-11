@@ -15,6 +15,12 @@ import subprocess
 import argparse
 from dotenv import load_dotenv
 
+# Support des touches fléchées et de l'historique
+try:
+    import readline
+except ImportError:
+    pass
+
 load_dotenv()
 
 from core.session import Session
