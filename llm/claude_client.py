@@ -30,16 +30,19 @@ class ClaudeClient:
 
     def analyze(self, context: str, extracted: dict, history: list = []) -> str:
         """
-        Analyse un output d'outil pentest et retourne
-        une analyse stratégique + next steps.
+        Analyse un output d'outil pentest (digest ou brut).
         """
+        # Si extracted est un wrapper avec digest
+        tool_name = extracted.get('metadata', extracted).get('tool', 'inconnu')
+        content   = extracted.get('digest', json.dumps(extracted, indent=2, ensure_ascii=False))
+
         user_message = f"""
 {context}
 
 === OUTPUT ANALYSÉ ===
-Outil : {extracted.get('tool', 'inconnu')}
-Données extraites :
-{json.dumps(extracted, indent=2, ensure_ascii=False)}
+Outil : {tool_name}
+Contenu technique :
+{content}
 
 Analyse ce résultat. Donne :
 1. Ce que tu vois (services, versions, surface d'attaque)
@@ -110,17 +113,21 @@ Analyse ce résultat. Donne :
         }
     }
 
-    def build_attack_plan(self, context: str, extracted: dict) -> dict:
+    def build_attack_plan(self, context: str, extracted: dict, raw_output: str = "") -> dict:
         """
-        Génère le plan d'attaque A/B/C via tool_use (output JSON garanti par l'API).
+        Génère le plan d'attaque A/B/C via tool_use.
+        L'ajout du raw_output (ou pre-digest) aide Claude à voir les détails techniques.
         """
         planner_system = self._load_prompt(PLANNER_PROMPT_PATH)
+        
+        # On utilise une version tronquée ou le digest si trop long
+        output_display = raw_output[:3000] if raw_output else json.dumps(extracted, indent=2, ensure_ascii=False)
 
         user_message = f"""
 {context}
 
 === RÉSULTATS DU SCAN DE RECON ===
-{json.dumps(extracted, indent=2, ensure_ascii=False)}
+{output_display}
 
 Cible : {extracted.get('host', 'inconnue')}
 Génère le plan d'attaque RedTeam. Utilise l'outil submit_attack_plan.

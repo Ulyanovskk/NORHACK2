@@ -76,7 +76,7 @@ def _is_recon_tool(tool: str) -> bool:
     return tool.lower() in ["nmap", "masscan", "rustscan", "arp-scan"]
 
 
-def _trigger_plan_generation(session: Session, planner: Planner, extracted: dict):
+def _trigger_plan_generation(session: Session, planner: Planner, extracted: dict, raw_output: str = ""):
     """
     Génère le plan d'attaque initial après un scan recon.
     Affiche le plan et démarre automatiquement l'option A.
@@ -85,7 +85,7 @@ def _trigger_plan_generation(session: Session, planner: Planner, extracted: dict
     context = session.get_context_summary()
 
     try:
-        plan_json = claude.build_attack_plan(context, extracted)
+        plan_json = claude.build_attack_plan(context, extracted, raw_output)
         planner.load_from_llm(plan_json)
         summary = planner.get_plan_summary()
 
@@ -210,7 +210,7 @@ def process_output(raw_output: str, command_line: str, session: Session, planner
             # Double check inside lock
             if not planner.has_plan():
                 # Plus d'analyse standard ici, on laisse le planificateur gérer
-                _trigger_plan_generation(session, planner, extracted)
+                _trigger_plan_generation(session, planner, extracted, raw_output)
         return
 
     # CAS 2 : Une option est active → analyse le résultat dans ce contexte
