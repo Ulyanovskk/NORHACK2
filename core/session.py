@@ -26,7 +26,11 @@ class Session:
     def _load(self) -> dict:
         if self.session_file.exists():
             with open(self.session_file, "r") as f:
-                return json.load(f)
+                data = json.load(f)
+            # Migration des données si nécessaire
+            if "notifications" not in data:
+                data["notifications"] = []
+            return data
         return {
             "target": self.target,
             "created_at": datetime.now().isoformat(),
@@ -35,6 +39,7 @@ class Session:
             "services": {},
             "vulnerabilities": [],
             "findings": [],
+            "notifications": [],
             "tested_vectors": [],
             "notes": [],
             "history": [],
@@ -109,6 +114,8 @@ class Session:
         vulns = self.data.get("vulnerabilities", [])
         tested = self.data.get("tested_vectors", [])
         findings = self.data.get("findings", [])
+        notifs = self.data.get("notifications", [])
+        unread = len([n for n in notifs if not n.get("read", False)])
 
         open_ports = [
             f"{p}/{v.get('protocol', 'tcp')} {v.get('service', 'unknown')} {v.get('version', '')}"
@@ -118,6 +125,7 @@ class Session:
 
         summary = f"""=== SESSION CONTEXT : {self.target} ===
 Démarré : {self.data['created_at']}
+Notifications non lues : {unread}
 
 PORTS OUVERTS ({len(open_ports)}) :
 {chr(10).join([f"  - {p}" for p in open_ports]) if open_ports else '  Aucun encore'}
@@ -159,6 +167,15 @@ HISTORIQUE DES ACTIONS (10 dernières) :
                 lines.append(f"       Résultat : {result}")
         lines.append("")
         return "\n".join(lines)
+
+    def add_notification(self, message: str):
+        """Ajoute une notification au système de fond."""
+        self.data["notifications"].append({
+            "msg": message,
+            "at": datetime.now().isoformat(),
+            "read": False
+        })
+        self.save()
 
     @classmethod
     def list_sessions(cls, storage_dir: str = "sessions/") -> list:

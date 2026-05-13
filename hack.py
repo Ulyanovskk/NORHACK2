@@ -47,7 +47,6 @@ from core.display import Display
 from core.planner import Planner, OptionStatus
 from core.knowledge import KnowledgeBase
 from core.correlator import Correlator
-from core.triggers import TriggerEngine
 from llm.claude_client import ClaudeClient
 from llm.deepseek_client import DeepSeekClient
 
@@ -56,7 +55,6 @@ analyzer   = Analyzer()
 router     = Router()
 knowledge  = KnowledgeBase()
 correlator = Correlator()
-triggers   = None # Sera initialisé avec la session
 claude     = ClaudeClient()
 deepseek   = DeepSeekClient()
 
@@ -143,12 +141,8 @@ def _trigger_replan(session: Session, planner: Planner):
 # ANALYSE D'UN OUTPUT D'OUTIL
 # ─────────────────────────────────────────────
 
-def process_output(raw_output: str, command_line: str, session: Session, planner: Planner):
+def process_output(raw_output: str, command_line: str, session: Session, planner: Planner, background: bool = False):
     """Analyse le résultat brut et met à jour la session/plan."""
-    global triggers
-    if triggers is None:
-        triggers = TriggerEngine(session)
-    
     tool_hint = command_line.split()[0] if command_line else ""
     prepared  = analyzer.prepare_for_llm(raw_output, tool_hint)
     tool      = prepared["tool"]
@@ -204,13 +198,6 @@ def process_output(raw_output: str, command_line: str, session: Session, planner
     for alert in alerts:
         display.info(f"[bold red]CORRÉLATION : {alert['name']} ({alert['severity']})[/bold red]")
         display.info(f"  → {alert['reason']}")
-
-    # ── Triggers Automatiques ──
-    auto_cmds = triggers.check_and_trigger(session.data)
-    for ac in auto_cmds:
-        display.info(f"[bold cyan]🤖 Trigger :[/bold cyan] {ac['desc']}")
-        cmd_parts = shlex.split(ac['cmd'])
-        wrapper_mode(cmd_parts[0], cmd_parts[1:], session, planner, background=True)
 
     # ── Logique Plan ──
     active_option = planner.get_active_option()
@@ -318,11 +305,6 @@ background_jobs = []
 
 def wrapper_mode(tool: str, args: list, session: Session, planner: Planner, background: bool = False):
     """Lance la commande réelle et intercepte l'output."""
-    # S'assure que triggers est lié à la session
-    global triggers
-    if triggers is None:
-        triggers = TriggerEngine(session)
-    
     if background:
         # Lance dans un thread séparé
         t = threading.Thread(
@@ -368,7 +350,7 @@ def _run_command_thread(tool: str, args: list, session: Session, planner: Planne
             return
 
         display.separator()
-        process_output(raw_output, cmd_str, session, planner)
+        process_output(raw_output, cmd_str, session, planner, background=background)
         
         # Si c'était en arrière-plan, on notifie à la fin
         # (On pourrait ajouter un flag, mais l'affichage suffit)

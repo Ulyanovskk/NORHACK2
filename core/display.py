@@ -138,10 +138,15 @@ class Display:
     def session_summary(self, session_data: dict):
         ports = session_data.get("ports", {})
         vulns = session_data.get("vulnerabilities", [])
+        notifs = session_data.get("notifications", [])
+        unread = len([n for n in notifs if not n.get("read", False)])
+        
+        notif_text = f"\n[bold yellow]🔔 Notifications :[/bold yellow] {unread} non lue(s)" if unread > 0 else ""
+
         console.print(Panel(
             f"[bold]Cible :[/bold] {session_data['target']}\n"
             f"[bold]Ports ouverts :[/bold] {len([p for p in ports.values() if p.get('state') == 'open'])}\n"
-            f"[bold]Vulnérabilités :[/bold] {len(vulns)}\n"
+            f"[bold]Vulnérabilités :[/bold] {len(vulns)}{notif_text}\n"
             f"[bold]Mis à jour :[/bold] {session_data.get('updated_at', '—')}",
             title="[bold cyan]SESSION[/bold cyan]",
             border_style="cyan"
