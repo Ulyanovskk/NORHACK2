@@ -50,4 +50,8 @@ RÈGLES STRICTES :
 - Ordonne les options par impact potentiel décroissant (A = plus prometteur)
 - Pense à la chaîne complète : accès initial → persistence → exfil
 - Si un service a une version connue vulnérable, exploite-la EN PREMIER
-- JSON valide uniquement, aucun markdown autour
+- JSON VALIDE UNIQUEMENT — aucun texte avant ou après le JSON
+- INTERDIT : backticks (```), markdown, apostrophes dans les valeurs JSON
+- Les valeurs "cmd" et "desc" sont des STRINGS SIMPLES, pas des blocs de code
+- Toutes les chaînes JSON doivent utiliser des guillemets doubles uniquement
+- N'échappe JAMAIS des caractères inutilement dans les strings JSON

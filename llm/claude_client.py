@@ -82,12 +82,7 @@ JSON uniquement, aucun texte autour.
             messages=[{"role": "user", "content": user_message}]
         )
         raw = response.content[0].text.strip()
-        # Nettoie les éventuels blocs ```json ... ```
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        return json.loads(raw)
+        return self._extract_json(raw)
 
     def replan(self, context: str, failure_context: str) -> dict:
         """
@@ -113,11 +108,7 @@ JSON uniquement.
             messages=[{"role": "user", "content": user_message}]
         )
         raw = response.content[0].text.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        return json.loads(raw)
+        return self._extract_json(raw)
 
     def analyze_step_result(self, context: str, option: dict, step_output: str, history: list = []) -> str:
         """
@@ -148,6 +139,89 @@ Sois direct et technique.
             messages=messages
         )
         return response.content[0].text
+
+    def _extract_json(self, raw: str) -> dict:
+        """
+        Extraction robuste du JSON depuis une réponse LLM.
+        Stratégie par ordre de robustesse :
+          1. Parse direct si déjà du JSON propre
+          2. Extrait le bloc ```json ... ``` ou ``` ... ```
+          3. Cherche le premier '{' jusqu'au dernier '}' par comptage de niveau
+          4. Lève JSONDecodeError si tout échoue
+        """
+        import re
+
+        # 1. Essai direct
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+
+        # 2. Extrait depuis un bloc ```[json] ... ```
+        fence_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', raw)
+        if fence_match:
+            try:
+                return json.loads(fence_match.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+
+        # 3. Trouve le JSON par comptage de niveau (méthode la plus fiable)
+        start = raw.find('{')
+        if start == -1:
+            raise json.JSONDecodeError("Aucun objet JSON trouvé", raw, 0)
+
+        depth   = 0
+        in_str  = False
+        escape  = False
+        end     = start
+
+        for i, ch in enumerate(raw[start:], start):
+            if escape:
+                escape = False
+                continue
+            if ch == '\\' and in_str:
+                escape = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+
+        candidate = raw[start:end + 1]
+
+        # 4. Essai direct sur le candidat extrait
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+        # 5. ast.literal_eval — gère les dicts Python style {'key': 'val'}
+        import ast
+        try:
+            result = ast.literal_eval(candidate)
+            if isinstance(result, dict):
+                return json.loads(json.dumps(result, ensure_ascii=False))
+        except (ValueError, SyntaxError):
+            pass
+
+        # 6. Remplacement single quotes → double quotes (heuristique de dernier recours)
+        import re as _re
+        try:
+            normalized = _re.sub(r"(?<![\\])'", '"', candidate)
+            return json.loads(normalized)
+        except json.JSONDecodeError as e:
+            raise json.JSONDecodeError(
+                f"JSON introuvable après tous les essais ({e.msg})",
+                candidate, e.pos
+            )
 
     def _load_prompt(self, path: str) -> str:
         """Charge un fichier prompt, retourne une string vide si introuvable."""
