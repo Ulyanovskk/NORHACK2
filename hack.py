@@ -203,7 +203,13 @@ def process_output(raw_output: str, command_line: str, session: Session, planner
         history  = session.get_llm_history()
         
         # Optimisation Coût : DeepSeek résume le log brut pour Claude
-        digest = deepseek.pre_digest(raw_output) if len(raw_output) > 500 else raw_output
+        if len(raw_output) > 200:
+            display.filtering()
+            digest = deepseek.pre_digest(raw_output)
+        else:
+            digest = raw_output
+            
+        display.analyzing("claude")
         analysis = claude.analyze_step_result(context, active_option, digest, history)
 
         # Détermine si c'est un succès ou un échec (heuristique simple)
@@ -244,13 +250,18 @@ def _run_standard_analysis(raw_output: str, tool: str, session: Session, extract
     context    = session.get_context_summary() + session.get_plan_status_summary()
     history    = session.get_llm_history()
 
-    display.analyzing(llm_choice)
-
     if llm_choice == "claude":
         # Optimisation Coût : DeepSeek pré-digère l'output pour Claude
-        digest = deepseek.pre_digest(raw_output) if len(raw_output) > 500 else raw_output
+        if len(raw_output) > 200:
+            display.filtering()
+            digest = deepseek.pre_digest(raw_output)
+        else:
+            digest = raw_output
+            
+        display.analyzing("claude")
         response = claude.analyze(context, {"digest": digest, "metadata": extracted}, history)
     else:
+        display.analyzing("deepseek")
         response = deepseek.generate_payloads(context, extracted, history)
 
     display.analysis_result(response, llm_choice)

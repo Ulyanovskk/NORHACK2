@@ -37,6 +37,9 @@ class Display:
         )
         console.print(f"[dim]Analyse en cours → {label}...[/dim]")
 
+    def filtering(self):
+        console.print("[dim]⚡ Filtrage intelligent (DeepSeek V3)...[/dim]")
+
     def analysis_result(self, content: str, llm: str):
         color = "blue" if llm == "claude" else "magenta"
         label = "CLAUDE HAIKU — ANALYSE" if llm == "claude" else "DEEPSEEK V3 — EXPLOIT"
