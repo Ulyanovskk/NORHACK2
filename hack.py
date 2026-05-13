@@ -278,24 +278,30 @@ def wrapper_mode(tool: str, args: list, session: Session, planner: Planner):
     display.info(f"Lancement : {' '.join(cmd)}")
 
     try:
-        result = subprocess.run(
-            " ".join([tool] + args),
-            capture_output=True,
+        cmd_str = " ".join([tool] + args)
+        process = subprocess.Popen(
+            cmd_str,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=300,
-            shell=True
+            shell=True,
+            bufsize=1,
+            universal_newlines=True
         )
-        raw_output = result.stdout + result.stderr
-
+        
+        raw_output = ""
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            raw_output += line
+            
+        process.wait(timeout=1800)
+        
         if not raw_output.strip():
             display.error("Aucun output reçu.")
             return
 
-        print(raw_output)
         display.separator()
-
-        full_cmd = " ".join([tool] + args)
-        process_output(raw_output, full_cmd, session, planner)
+        process_output(raw_output, cmd_str, session, planner)
 
     except FileNotFoundError:
         display.error(f"Outil '{tool}' introuvable. Vérifie ton PATH.")
