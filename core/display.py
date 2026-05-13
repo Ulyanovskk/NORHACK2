@@ -279,3 +279,7 @@ class Display:
             )
         )
         console.print(Rule(style="red"))
+
+    def raw(self, text: str):
+        """Affiche du texte brut (output d'outil) sans fioritures."""
+        console.print(text, style="dim")
