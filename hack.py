@@ -20,6 +20,8 @@ import os
 import subprocess
 import json
 import argparse
+import threading
+import time
 from dotenv import load_dotenv
 
 try:
@@ -269,16 +271,34 @@ def _run_standard_analysis(raw_output: str, tool: str, session: Session, extract
 
 
 # ─────────────────────────────────────────────
-# MODES D'EXÉCUTION
+# GESTION DES JOBS (ARRIÈRE-PLAN)
 # ─────────────────────────────────────────────
 
-def wrapper_mode(tool: str, args: list, session: Session, planner: Planner):
+background_jobs = []
+
+def wrapper_mode(tool: str, args: list, session: Session, planner: Planner, background: bool = False):
     """Lance la commande réelle et intercepte l'output."""
-    cmd = [tool] + args
-    display.info(f"Lancement : {' '.join(cmd)}")
+    if background:
+        # Lance dans un thread séparé
+        t = threading.Thread(
+            target=_run_command_thread, 
+            args=(tool, args, session, planner),
+            daemon=True
+        )
+        t.start()
+        display.success(f"Commande lancée en arrière-plan (Job {len(background_jobs) + 1})")
+        background_jobs.append({"tool": tool, "thread": t, "start": time.time()})
+        return
+
+    _run_command_thread(tool, args, session, planner)
+
+
+def _run_command_thread(tool: str, args: list, session: Session, planner: Planner):
+    """Logique d'exécution réelle (synchrone)."""
+    cmd_str = " ".join([tool] + args)
+    display.info(f"Lancement : {cmd_str}")
 
     try:
-        cmd_str = " ".join([tool] + args)
         process = subprocess.Popen(
             cmd_str,
             stdout=subprocess.PIPE,
@@ -302,11 +322,16 @@ def wrapper_mode(tool: str, args: list, session: Session, planner: Planner):
 
         display.separator()
         process_output(raw_output, cmd_str, session, planner)
+        
+        # Si c'était en arrière-plan, on notifie à la fin
+        # (On pourrait ajouter un flag, mais l'affichage suffit)
 
     except FileNotFoundError:
         display.error(f"Outil '{tool}' introuvable. Vérifie ton PATH.")
     except subprocess.TimeoutExpired:
         display.error("Timeout — commande trop longue.")
+    except Exception as e:
+        display.error(f"Erreur d'exécution : {e}")
 
 
 def pipe_mode(session: Session, planner: Planner):
@@ -380,9 +405,14 @@ def interactive_shell(session: Session, planner: Planner):
 
         # ── Lancement d'une commande outil ──
         if question.startswith("!"):
-            cmd_parts = question[1:].split()
+            cmd_line = question[1:].strip()
+            is_bg    = cmd_line.endswith("&")
+            if is_bg:
+                cmd_line = cmd_line[:-1].strip()
+            
+            cmd_parts = cmd_line.split()
             if cmd_parts:
-                wrapper_mode(cmd_parts[0], cmd_parts[1:], session, planner)
+                wrapper_mode(cmd_parts[0], cmd_parts[1:], session, planner, background=is_bg)
             continue
 
         # ── Question libre → LLM ──
