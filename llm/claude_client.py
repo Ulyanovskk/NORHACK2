@@ -57,11 +57,62 @@ Analyse ce résultat. Donne :
         )
         return response.content[0].text
 
+    # ─── Schéma du plan d'attaque (utilisé par tool_use) ──────────────────────
+    ATTACK_PLAN_TOOL = {
+        "name": "submit_attack_plan",
+        "description": "Soumet le plan d'attaque RedTeam structuré.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "recon_summary": {
+                    "type": "string",
+                    "description": "Résumé technique de ce qu'on a trouvé (2-3 phrases)"
+                },
+                "threat_level": {
+                    "type": "string",
+                    "enum": ["critical", "high", "medium", "low"]
+                },
+                "options": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "items": {
+                        "type": "object",
+                        "required": ["id", "label", "objective", "rationale",
+                                     "commands", "expected_result", "fallback_if_fail"],
+                        "properties": {
+                            "id":               {"type": "string", "enum": ["A", "B", "C"]},
+                            "label":            {"type": "string"},
+                            "objective":        {"type": "string"},
+                            "rationale":        {"type": "string"},
+                            "commands": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": ["cmd", "desc"],
+                                    "properties": {
+                                        "cmd":  {"type": "string"},
+                                        "desc": {"type": "string"}
+                                    }
+                                }
+                            },
+                            "expected_result":  {"type": "string"},
+                            "fallback_if_fail": {"type": "string"}
+                        }
+                    }
+                },
+                "pivot_trigger": {
+                    "type": "string",
+                    "description": "Condition qui déclenche un re-plan complet"
+                }
+            },
+            "required": ["recon_summary", "threat_level", "options", "pivot_trigger"]
+        }
+    }
+
     def build_attack_plan(self, context: str, extracted: dict) -> dict:
         """
-        Génère le plan d'attaque A/B/C initial après un scan de recon.
-        Retourne un dict parsé depuis le JSON du LLM.
-        Lève une ValueError si le JSON est invalide.
+        Génère le plan d'attaque A/B/C via tool_use (output JSON garanti par l'API).
         """
         planner_system = self._load_prompt(PLANNER_PROMPT_PATH)
 
@@ -71,23 +122,22 @@ Analyse ce résultat. Donne :
 === RÉSULTATS DU SCAN DE RECON ===
 {json.dumps(extracted, indent=2, ensure_ascii=False)}
 
-Génère le plan d'attaque JSON maintenant. Objectif : accès initial puis escalade.
-La cible est : {extracted.get('host', 'inconnue')}
-JSON uniquement, aucun texte autour.
+Cible : {extracted.get('host', 'inconnue')}
+Génère le plan d'attaque RedTeam. Utilise l'outil submit_attack_plan.
 """
         response = self.client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
             system=planner_system,
+            tools=[self.ATTACK_PLAN_TOOL],
+            tool_choice={"type": "auto"},
             messages=[{"role": "user", "content": user_message}]
         )
-        raw = response.content[0].text.strip()
-        return self._extract_json(raw)
+        return self._extract_tool_result(response, user_message, planner_system)
 
     def replan(self, context: str, failure_context: str) -> dict:
         """
-        Génère un nouveau plan d'attaque après épuisement de toutes les options.
-        Utilise le contexte d'échec pour orienter vers de nouveaux vecteurs.
+        Génère un nouveau plan via tool_use après épuisement de toutes les options.
         """
         planner_system = self._load_prompt(PLANNER_PROMPT_PATH)
 
@@ -96,19 +146,36 @@ JSON uniquement, aucun texte autour.
 
 {failure_context}
 
-Toutes les options précédentes ont été épuisées. 
-Génère un NOUVEAU plan d'attaque avec des vecteurs différents.
-Pense latéralement : pivots, vecteurs indirects, chained exploits, social engineering technique.
-JSON uniquement.
+Toutes les options précédentes ont été épuisées.
+Établis un NOUVEAU plan avec des vecteurs différents (pivots, chained exploits, etc.).
+Utilise l'outil submit_attack_plan.
 """
         response = self.client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
             system=planner_system,
+            tools=[self.ATTACK_PLAN_TOOL],
+            tool_choice={"type": "auto"},
             messages=[{"role": "user", "content": user_message}]
         )
-        raw = response.content[0].text.strip()
-        return self._extract_json(raw)
+        return self._extract_tool_result(response, user_message, planner_system)
+
+    def _extract_tool_result(self, response, user_message: str, system: str) -> dict:
+        """
+        Extrait le résultat d'un appel tool_use.
+        Si le modèle ne retourne pas de tool_use (ex: refus ou message texte),
+        tente de parser le texte en JSON via _extract_json.
+        """
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "submit_attack_plan":
+                return block.input  # dict Python garanti par le SDK Anthropic
+
+        # Fallback : si le modèle a répondu en texte malgré le tool_use
+        for block in response.content:
+            if hasattr(block, "text") and block.text:
+                return self._extract_json(block.text.strip())
+
+        raise ValueError("Aucun résultat tool_use ni texte parseable retourné par le LLM.")
 
     def analyze_step_result(self, context: str, option: dict, step_output: str, history: list = []) -> str:
         """
