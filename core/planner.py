@@ -28,18 +28,25 @@ class Planner:
 
     def __init__(self, session):
         self.session = session
-        # Initialise la structure dans la session si absente
+        # Initialise ou complète la structure dans la session
+        default_plan = {
+            "version": 0,          # Incrément à chaque re-plan
+            "options": [],          # Liste des options A, B, C
+            "active_option": None,  # ID de l'option en cours ("A", "B", "C")
+            "history": [],          # Historique de toutes les tentatives
+            "recon_summary": "",
+            "threat_level": "unknown",
+            "pivot_trigger": "",
+            "created_at": datetime.now().isoformat()
+        }
+
         if "attack_plan" not in self.session.data:
-            self.session.data["attack_plan"] = {
-                "version": 0,          # Incrément à chaque re-plan
-                "options": [],          # Liste des options A, B, C
-                "active_option": None,  # ID de l'option en cours ("A", "B", "C")
-                "history": [],          # Historique de toutes les tentatives
-                "recon_summary": "",
-                "threat_level": "unknown",
-                "pivot_trigger": "",
-                "created_at": datetime.now().isoformat()
-            }
+            self.session.data["attack_plan"] = default_plan
+        else:
+            # S'assure que toutes les clés nécessaires sont présentes (migration)
+            for key, val in default_plan.items():
+                if key not in self.session.data["attack_plan"]:
+                    self.session.data["attack_plan"][key] = val
 
     # ─────────────────────────────────────────────
     # ÉTAT DU PLAN
@@ -92,7 +99,11 @@ class Planner:
         Charge un plan généré par le LLM (format JSON défini dans attack_planner.txt).
         Incrémente la version (re-plan).
         """
-        self.plan["version"] += 1
+        # Incrémente la version (sécurisé)
+        if "version" not in self.plan:
+            self.plan["version"] = 1
+        else:
+            self.plan["version"] += 1
         self.plan["recon_summary"] = llm_json.get("recon_summary", "")
         self.plan["threat_level"] = llm_json.get("threat_level", "unknown")
         self.plan["pivot_trigger"] = llm_json.get("pivot_trigger", "")

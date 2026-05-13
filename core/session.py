@@ -108,7 +108,7 @@ class Session:
         findings = self.data.get("findings", [])
 
         open_ports = [
-            f"{p}/{v['protocol']} {v['service']} {v['version']}"
+            f"{p}/{v.get('protocol', 'tcp')} {v.get('service', 'unknown')} {v.get('version', '')}"
             for p, v in ports.items()
             if v.get("state") == "open"
         ]
