@@ -419,8 +419,10 @@ def interactive_shell(session: Session, planner: Planner):
         context  = session.get_context_summary() + session.get_plan_status_summary()
         history  = session.get_llm_history()
 
-        keywords_deepseek = ["payload", "exploit", "bypass", "shell", "inject"]
-        llm_choice        = "deepseek" if any(k in question.lower() for k in keywords_deepseek) else "claude"
+        # ── Question libre → Par défaut DeepSeek (moins cher) ──
+        # On ne garde Claude que pour la stratégie complexe
+        keywords_claude = ["stratégie", "plan", "roadmap", "priorité", "analyse"]
+        llm_choice      = "claude" if any(k in question.lower() for k in keywords_claude) else "deepseek"
 
         display.analyzing(llm_choice)
 
