@@ -73,3 +73,29 @@ Génère :
             ]
         )
         return response.choices[0].message.content
+
+    def pre_digest(self, raw_output: str) -> str:
+        """
+        Utilise DeepSeek pour 'nettoyer' et résumer un log massif.
+        Objectif : Réduire les tokens d'entrée pour Claude Haiku.
+        """
+        prompt = """Tu es un pré-processeur de logs pentest.
+TON RÔLE : Extraire UNIQUEMENT les faits techniques utiles (versions, erreurs, ports, chemins) d'un log brut.
+CONTRAINTES :
+- Style télégraphique (mots-clés uniquement)
+- Supprime les bannières, le texte de progression, les répétitions
+- Ne fais AUCUNE analyse, juste une extraction brute condensée
+- Si le log est vide ou inutile, réponds 'RIEN'
+"""
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=500,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": f"LOG À CONDENSER :\n{raw_output[:8000]}"}
+                ]
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"[Erreur filtrage : {e}]"
