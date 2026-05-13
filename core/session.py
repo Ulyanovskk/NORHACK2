@@ -35,7 +35,8 @@ class Session:
             "findings": [],
             "tested_vectors": [],
             "notes": [],
-            "history": []
+            "history": [],
+            "attack_plan": {}  # Géré par core/planner.py
         }
 
     def save(self):
@@ -135,6 +136,26 @@ DERNIERS FINDINGS ({min(3, len(findings))}) :
             {"role": h["role"], "content": h["content"]}
             for h in self.data["history"]
         ]
+
+    def get_plan_status_summary(self) -> str:
+        """
+        Retourne un résumé du plan d'attaque actif pour injection dans le contexte LLM.
+        Utilisé pour que le LLM sache toujours où on en est dans le plan.
+        """
+        plan = self.data.get("attack_plan", {})
+        if not plan or not plan.get("options"):
+            return ""
+
+        lines = [f"\n=== PLAN D'ATTAQUE ACTIF (v{plan.get('version', 1)}) ==="]
+        for opt in plan["options"]:
+            status = opt.get("status", "pending")
+            icon = {"pending": "○", "active": "▶", "success": "✓", "failed": "✗"}.get(status, "?")
+            result = opt.get("result_summary", "")
+            lines.append(f"  [{icon}] Option {opt['id']} — {opt['label']} [{status}]")
+            if result:
+                lines.append(f"       Résultat : {result}")
+        lines.append("")
+        return "\n".join(lines)
 
     @classmethod
     def list_sessions(cls, storage_dir: str = "sessions/") -> list:

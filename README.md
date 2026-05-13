@@ -45,7 +45,7 @@ Idéal pour analyser l'output d'une commande que vous avez déjà personnalisée
 - **Exemple** : `gobuster dir -u http://target.com -w common.txt | hack`
 - **Avantage** : Permet d'intégrer NORHACK dans n'importe quel script ou chaine de commandes.
 
-### 3. Mode Interactif (Le Shell)
+### 3. Mode Interactif (Le Shell)P
 Discutez directement avec votre assistant IA en utilisant tout le contexte accumulé.
 - **Usage** : `hack shell`
 - **Avantage** : L'IA connaît déjà tous les ports ouverts, les services et les vulnérabilités trouvés précédemment. Vous pouvez lui demander des payloads spécifiques ou des conseils stratégiques basés sur la surface d'attaque actuelle.

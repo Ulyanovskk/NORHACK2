@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
 """
-REDTEAM ASSISTANT
+NORHACK — REDTEAM ASSISTANT
 Usage:
-  hack <tool> [args...]     — wrapper de commande
-  <tool> [args] | hack      — mode pipe
-  hack shell                — mode interactif
-  hack session <target>     — affiche la session en cours
-  hack sessions             — liste toutes les sessions
+  hack <tool> [args...]         — wrapper de commande + analyse IA
+  <tool> [args] | hack          — mode pipe
+  hack shell [target]           — mode shell interactif
+  hack target <ip>              — définit la cible active
+  hack plan                     — affiche le plan d'attaque en cours
+  hack option <A|B|C>           — démarre une option du plan
+  hack done [A|B|C] ["résumé"] — marque l'option active comme réussie
+  hack fail [A|B|C] ["raison"] — marque l'option active comme échouée
+  hack replan                   — force un nouveau plan d'attaque
+  hack session [target]         — affiche la session en cours
+  hack sessions                 — liste toutes les sessions
 """
 
 import sys
 import os
 import subprocess
+import json
 import argparse
 from dotenv import load_dotenv
 
-# Support des touches fléchées et de l'historique
 try:
     import readline
 except ImportError:
@@ -27,48 +33,129 @@ from core.session import Session
 from core.router import Router
 from core.analyzer import Analyzer
 from core.display import Display
+from core.planner import Planner, OptionStatus
 from llm.claude_client import ClaudeClient
 from llm.deepseek_client import DeepSeekClient
 
-display = Display()
+display  = Display()
 analyzer = Analyzer()
-router = Router()
-claude = ClaudeClient()
+router   = Router()
+claude   = ClaudeClient()
 deepseek = DeepSeekClient()
 
+
+# ─────────────────────────────────────────────
+# SESSION
+# ─────────────────────────────────────────────
 
 def get_or_create_session(target: str) -> Session:
     return Session(target=target)
 
 
-def process_output(raw_output: str, tool_hint: str, session: Session):
+# ─────────────────────────────────────────────
+# LOGIQUE DU PLAN D'ATTAQUE
+# ─────────────────────────────────────────────
+
+def _is_recon_tool(tool: str) -> bool:
+    """True si l'outil est un scan de reconnaissance initial."""
+    return tool.lower() in ["nmap", "masscan", "rustscan", "arp-scan"]
+
+
+def _trigger_plan_generation(session: Session, planner: Planner, extracted: dict):
+    """
+    Génère le plan d'attaque initial après un scan recon.
+    Affiche le plan et démarre automatiquement l'option A.
+    """
+    display.info("Génération du plan d'attaque RedTeam...")
+    context = session.get_context_summary()
+
+    try:
+        plan_json = claude.build_attack_plan(context, extracted)
+        planner.load_from_llm(plan_json)
+        summary = planner.get_plan_summary()
+
+        display.plan_generated(
+            version=summary["version"],
+            threat_level=summary["threat_level"],
+            recon_summary=summary["recon_summary"]
+        )
+        display.plan_table(summary["options"])
+
+        # Démarre automatiquement l'option A
+        first_opt = planner.auto_advance()
+        if first_opt:
+            display.option_start(first_opt)
+
+    except (json.JSONDecodeError, ValueError) as e:
+        display.error(f"Erreur parsing plan LLM : {e}")
+    except Exception as e:
+        display.error(f"Erreur génération plan : {e}")
+
+
+def _trigger_replan(session: Session, planner: Planner):
+    """
+    Déclenche un re-plan complet quand toutes les options sont épuisées.
+    """
+    display.replan_alert()
+    context = session.get_context_summary()
+    failure_ctx = planner.get_failure_context()
+
+    try:
+        plan_json = claude.replan(context, failure_ctx)
+        planner.load_from_llm(plan_json)
+        summary = planner.get_plan_summary()
+
+        display.plan_generated(
+            version=summary["version"],
+            threat_level=summary["threat_level"],
+            recon_summary=summary["recon_summary"]
+        )
+        display.plan_table(summary["options"])
+
+        first_opt = planner.auto_advance()
+        if first_opt:
+            display.option_start(first_opt)
+
+    except (json.JSONDecodeError, ValueError) as e:
+        display.error(f"Erreur parsing re-plan LLM : {e}")
+    except Exception as e:
+        display.error(f"Erreur re-plan : {e}")
+
+
+# ─────────────────────────────────────────────
+# ANALYSE D'UN OUTPUT D'OUTIL
+# ─────────────────────────────────────────────
+
+def process_output(raw_output: str, tool_hint: str, session: Session, planner: Planner):
     """
     Cœur du système :
-    1. Détecte l'outil
-    2. Parse l'output
-    3. Route vers le bon LLM
-    4. Affiche l'analyse
+    1. Détecte l'outil et parse l'output
+    2. Met à jour la session (ports, vulns, findings)
+    3. Si scan recon initial → génère le plan A/B/C
+    4. Sinon → analyse le résultat dans le contexte du plan actif
+    5. Si toutes les options épuisées → re-plan
     """
-    prepared = analyzer.prepare_for_llm(raw_output, tool_hint)
-    tool = prepared["tool"]
+    prepared  = analyzer.prepare_for_llm(raw_output, tool_hint)
+    tool      = prepared["tool"]
     extracted = prepared["extracted"]
 
     display.tool_detected(tool, session.target)
 
-    # Affichage structuré selon l'outil
+    # ── Affichage structuré + mise à jour session ──
     if tool == "nmap":
-        hosts = extracted.get("hosts", [])
-        for host in hosts:
-            display.ports_table(host.get("open_ports", []))
-            # Mise à jour session
-            for p in host.get("open_ports", []):
-                session.add_port(
-                    port=int(p["port"]),
-                    protocol=p["protocol"],
-                    state=p["state"],
-                    service=p["service"],
-                    version=p["version"]
-                )
+        hosts = extracted.get("hosts", [extracted])  # compat avec les deux formats
+        for host in hosts if isinstance(hosts, list) else [hosts]:
+            ports = host.get("open_ports", extracted.get("ports", []))
+            display.ports_table(ports)
+            for p in ports:
+                if p.get("state") == "open":
+                    session.add_port(
+                        port=int(p["port"]),
+                        protocol=p.get("protocol", "tcp"),
+                        state=p["state"],
+                        service=p.get("service", ""),
+                        version=p.get("version", "")
+                    )
 
     elif tool == "gobuster":
         display.paths_table(extracted.get("interesting", []))
@@ -76,28 +163,83 @@ def process_output(raw_output: str, tool_hint: str, session: Session):
     elif tool == "nuclei":
         display.vulnerabilities_table(extracted.get("findings", []))
         for f in extracted.get("findings", []):
-            if f["severity"] in ["critical", "high"]:
+            if f.get("severity") in ["critical", "high"]:
                 session.add_vulnerability({
-                    "type": f["template"],
-                    "location": f["target"],
-                    "severity": f["severity"],
-                    "details": f["type"]
+                    "type":     f.get("template", ""),
+                    "location": f.get("target", ""),
+                    "severity": f.get("severity", ""),
+                    "details":  f.get("type", "")
                 })
 
-    # Ajout au finding log de session
+    # Enregistre le finding
+    items = extracted.get("open_ports",
+            extracted.get("paths",
+            extracted.get("findings", [])))
     session.add_finding(
         tool=tool,
-        summary=f"{len(extracted.get('open_ports', extracted.get('paths', extracted.get('findings', []))))} éléments trouvés",
+        summary=f"{len(items)} éléments trouvés",
         raw=raw_output
     )
 
-    # Routing LLM
+    display.separator()
+
+    # ── Logique Plan ──
+    active_option = planner.get_active_option()
+    is_recon      = _is_recon_tool(tool)
+
+    # CAS 1 : Scan recon initial et pas encore de plan → génère le plan
+    if is_recon and not planner.has_plan():
+        # Analyse standard d'abord
+        _run_standard_analysis(raw_output, tool, session, extracted)
+        display.separator()
+        _trigger_plan_generation(session, planner, extracted)
+        return
+
+    # CAS 2 : Une option est active → analyse le résultat dans ce contexte
+    if active_option:
+        context  = session.get_context_summary() + session.get_plan_status_summary()
+        history  = session.get_llm_history()
+        analysis = claude.analyze_step_result(context, active_option, raw_output, history)
+
+        # Détermine si c'est un succès ou un échec (heuristique simple)
+        success_keywords = ["succès", "trouvé", "access", "shell", "credential",
+                            "injectable", "vulnerable", "valid", "login:", "password:"]
+        fail_keywords    = ["aucun", "nothing", "no result", "failed", "timeout",
+                            "error", "filtered", "closed", "not found"]
+
+        analysis_lower = analysis.lower()
+        is_success = any(k in analysis_lower for k in success_keywords)
+        is_fail    = any(k in analysis_lower for k in fail_keywords)
+
+        if is_success and not is_fail:
+            active_option["status"] = OptionStatus.SUCCESS
+        elif is_fail:
+            active_option["status"] = OptionStatus.FAILED
+
+        display.option_result(active_option, "", analysis)
+        session.add_to_history("assistant", analysis)
+        session.save()
+
+        # Affiche le tableau mis à jour
+        summary = planner.get_plan_summary()
+        display.plan_table(summary["options"], summary["active"])
+
+        # CAS 3 : Toutes les options épuisées → re-plan
+        if planner.all_options_exhausted():
+            _trigger_replan(session, planner)
+        return
+
+    # CAS 4 : Pas de plan actif → analyse standard + routing LLM classique
+    _run_standard_analysis(raw_output, tool, session, extracted)
+
+
+def _run_standard_analysis(raw_output: str, tool: str, session: Session, extracted: dict):
+    """Analyse LLM standard (routing Claude/DeepSeek)."""
     llm_choice = router.route_auto(raw_output, tool)
-    context = session.get_context_summary()
-    history = session.get_llm_history()
+    context    = session.get_context_summary() + session.get_plan_status_summary()
+    history    = session.get_llm_history()
 
     display.analyzing(llm_choice)
-    display.separator()
 
     if llm_choice == "claude":
         response = claude.analyze(context, extracted, history)
@@ -105,12 +247,14 @@ def process_output(raw_output: str, tool_hint: str, session: Session):
         response = deepseek.generate_payloads(context, extracted, history)
 
     display.analysis_result(response, llm_choice)
-
-    # Sauvegarde dans l'historique
     session.add_to_history("assistant", response)
 
 
-def wrapper_mode(tool: str, args: list, session: Session):
+# ─────────────────────────────────────────────
+# MODES D'EXÉCUTION
+# ─────────────────────────────────────────────
+
+def wrapper_mode(tool: str, args: list, session: Session, planner: Planner):
     """Lance la commande réelle et intercepte l'output."""
     cmd = [tool] + args
     display.info(f"Lancement : {' '.join(cmd)}")
@@ -128,11 +272,10 @@ def wrapper_mode(tool: str, args: list, session: Session):
             display.error("Aucun output reçu.")
             return
 
-        # Affiche l'output brut
         print(raw_output)
         display.separator()
 
-        process_output(raw_output, tool, session)
+        process_output(raw_output, tool, session, planner)
 
     except FileNotFoundError:
         display.error(f"Outil '{tool}' introuvable. Vérifie ton PATH.")
@@ -140,7 +283,7 @@ def wrapper_mode(tool: str, args: list, session: Session):
         display.error("Timeout — commande trop longue.")
 
 
-def pipe_mode(session: Session):
+def pipe_mode(session: Session, planner: Planner):
     """Lit depuis stdin (mode pipe)."""
     if sys.stdin.isatty():
         return False
@@ -149,21 +292,28 @@ def pipe_mode(session: Session):
     if not raw_output.strip():
         return False
 
-    process_output(raw_output, "", session)
+    process_output(raw_output, "", session, planner)
     return True
 
 
-def interactive_shell(session: Session):
-    """Mode shell interactif — pose des questions libres ou exécute des outils."""
+def interactive_shell(session: Session, planner: Planner):
+    """Mode shell interactif."""
     display.banner()
     display.session_summary(session.data)
-    display.info("Mode shell interactif. Tape 'exit' pour quitter ou '!' pour lancer une commande.")
-    display.info("Exemple : !nmap -sV 10.10.10.123")
+
+    # Affiche le plan si déjà existant
+    if planner.has_plan():
+        summary = planner.get_plan_summary()
+        display.plan_table(summary["options"], summary["active"])
+
+    display.info("Mode shell interactif. '!' pour lancer une commande, 'help' pour l'aide.")
 
     while True:
         try:
-            prompt_target = session.target if session.target != "unknown" else "no-target"
-            question = input(f"\n[hack][{prompt_target}]> ").strip()
+            target_label = session.target if session.target != "unknown" else "no-target"
+            active_opt   = planner.get_active_option()
+            opt_label    = f"|opt:{active_opt['id']}" if active_opt else ""
+            question     = input(f"\n[norhack][{target_label}{opt_label}]> ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -174,21 +324,47 @@ def interactive_shell(session: Session):
         if not question:
             continue
 
-        # MODE COMMANDE DIRECTE (commence par !)
+        # ── Commandes internes du shell ──
+        if question == "help":
+            print(__doc__)
+            continue
+
+        if question == "plan":
+            _cmd_plan(planner)
+            continue
+
+        if question.startswith("option "):
+            opt_id = question.split()[1].upper()
+            _cmd_option(opt_id, planner)
+            continue
+
+        if question.startswith("done"):
+            parts   = question.split(maxsplit=2)
+            opt_id  = parts[1].upper() if len(parts) > 1 and len(parts[1]) == 1 else None
+            summary = parts[2] if len(parts) > 2 else ""
+            _cmd_done(opt_id, summary, session, planner)
+            continue
+
+        if question.startswith("fail"):
+            parts  = question.split(maxsplit=2)
+            opt_id = parts[1].upper() if len(parts) > 1 and len(parts[1]) == 1 else None
+            reason = parts[2] if len(parts) > 2 else ""
+            _cmd_fail(opt_id, reason, session, planner)
+            continue
+
+        # ── Lancement d'une commande outil ──
         if question.startswith("!"):
             cmd_parts = question[1:].split()
             if cmd_parts:
-                tool = cmd_parts[0]
-                args = cmd_parts[1:]
-                wrapper_mode(tool, args, session)
+                wrapper_mode(cmd_parts[0], cmd_parts[1:], session, planner)
             continue
 
-        context = session.get_context_summary()
-        history = session.get_llm_history()
+        # ── Question libre → LLM ──
+        context  = session.get_context_summary() + session.get_plan_status_summary()
+        history  = session.get_llm_history()
 
-        # Questions d'exploitation → DeepSeek, reste → Claude
         keywords_deepseek = ["payload", "exploit", "bypass", "shell", "inject"]
-        llm_choice = "deepseek" if any(k in question.lower() for k in keywords_deepseek) else "claude"
+        llm_choice        = "deepseek" if any(k in question.lower() for k in keywords_deepseek) else "claude"
 
         display.analyzing(llm_choice)
 
@@ -202,15 +378,88 @@ def interactive_shell(session: Session):
         session.add_to_history("assistant", response)
 
 
+# ─────────────────────────────────────────────
+# COMMANDES INTERNES
+# ─────────────────────────────────────────────
+
+def _cmd_plan(planner: Planner):
+    """Affiche le plan d'attaque actif."""
+    if not planner.has_plan():
+        display.info("Aucun plan d'attaque actif. Lance un scan nmap d'abord.")
+        return
+    summary = planner.get_plan_summary()
+    display.plan_generated(
+        version=summary["version"],
+        threat_level=summary["threat_level"],
+        recon_summary=summary["recon_summary"]
+    )
+    display.plan_table(summary["options"], summary["active"])
+
+
+def _cmd_option(option_id: str, planner: Planner):
+    """Démarre manuellement une option du plan."""
+    if not planner.has_plan():
+        display.error("Aucun plan actif.")
+        return
+    planner.start_option(option_id)
+    opt = planner.get_active_option()
+    if opt:
+        display.option_start(opt)
+    else:
+        display.error(f"Option '{option_id}' introuvable.")
+
+
+def _cmd_done(option_id: str | None, result_summary: str, session: Session, planner: Planner):
+    """Marque une option comme réussie."""
+    opt = planner.get_active_option() if not option_id else None
+    if option_id:
+        planner.start_option(option_id)  # s'assure qu'elle est active
+        opt = planner.get_active_option()
+
+    if not opt:
+        display.error("Aucune option active à marquer.")
+        return
+
+    planner.mark_success(opt["id"], result_summary or "Résultat concluant.")
+    display.success(f"Option {opt['id']} marquée SUCCÈS : {result_summary}")
+    summary = planner.get_plan_summary()
+    display.plan_table(summary["options"], summary["active"])
+
+
+def _cmd_fail(option_id: str | None, reason: str, session: Session, planner: Planner):
+    """Marque une option comme échouée et passe à la suivante."""
+    opt = planner.get_active_option() if not option_id else None
+    if option_id:
+        planner.start_option(option_id)
+        opt = planner.get_active_option()
+
+    if not opt:
+        display.error("Aucune option active à marquer.")
+        return
+
+    planner.mark_failed(opt["id"], reason or "Rien de concluant.")
+    display.error(f"Option {opt['id']} marquée ÉCHEC : {reason}")
+
+    # Avance automatiquement à la suivante
+    next_opt = planner.auto_advance()
+    if next_opt:
+        display.option_start(next_opt)
+    elif planner.all_options_exhausted():
+        _trigger_replan(session, planner)
+
+
+# ─────────────────────────────────────────────
+# POINT D'ENTRÉE PRINCIPAL
+# ─────────────────────────────────────────────
+
 def main():
-    # Charge ou crée une session
-    # La cible peut être passée via env var pour le pipe mode
-    target = os.getenv("HACK_TARGET", "unknown")
+    target  = os.getenv("HACK_TARGET", "unknown")
     session = get_or_create_session(target)
+    planner = Planner(session)
 
     # Mode pipe
     if not sys.stdin.isatty():
-        pipe_mode(session)
+        pipe_mode(session, planner)
         return
 
     if len(sys.argv) < 2:
@@ -220,17 +469,61 @@ def main():
 
     cmd = sys.argv[1].lower()
 
-    # Commandes internes
+    # ── Commandes internes ──
+
     if cmd == "shell":
         if len(sys.argv) >= 3:
-            target = sys.argv[2]
+            target  = sys.argv[2]
             session = get_or_create_session(target)
-        interactive_shell(session)
+            planner = Planner(session)
+        interactive_shell(session, planner)
+
+    elif cmd == "target":
+        if len(sys.argv) >= 3:
+            target = sys.argv[2]
+            os.environ["HACK_TARGET"] = target
+            session = get_or_create_session(target)
+            planner = Planner(session)
+            display.success(f"Cible définie : {target}")
+        else:
+            display.error("Usage: hack target <ip_ou_domaine>")
+
+    elif cmd == "plan":
+        if len(sys.argv) >= 3:
+            target  = sys.argv[2]
+            session = get_or_create_session(target)
+            planner = Planner(session)
+        _cmd_plan(planner)
+
+    elif cmd == "option":
+        if len(sys.argv) >= 3:
+            _cmd_option(sys.argv[2].upper(), planner)
+        else:
+            display.error("Usage: hack option <A|B|C>")
+
+    elif cmd == "done":
+        opt_id  = sys.argv[2].upper() if len(sys.argv) >= 3 and len(sys.argv[2]) == 1 else None
+        summary = " ".join(sys.argv[3:]) if len(sys.argv) >= 4 else (sys.argv[2] if len(sys.argv) >= 3 and len(sys.argv[2]) > 1 else "")
+        _cmd_done(opt_id, summary, session, planner)
+
+    elif cmd == "fail":
+        opt_id = sys.argv[2].upper() if len(sys.argv) >= 3 and len(sys.argv[2]) == 1 else None
+        reason = " ".join(sys.argv[3:]) if len(sys.argv) >= 4 else (sys.argv[2] if len(sys.argv) >= 3 and len(sys.argv[2]) > 1 else "")
+        _cmd_fail(opt_id, reason, session, planner)
+
+    elif cmd == "replan":
+        if len(sys.argv) >= 3:
+            target  = sys.argv[2]
+            session = get_or_create_session(target)
+            planner = Planner(session)
+        if planner.has_plan():
+            _trigger_replan(session, planner)
+        else:
+            display.error("Aucun plan existant. Lance un scan nmap d'abord.")
 
     elif cmd == "session":
         if len(sys.argv) >= 3:
-            target = sys.argv[2]
-            session = get_or_create_session(target)
+            session = get_or_create_session(sys.argv[2])
         display.session_summary(session.data)
 
     elif cmd == "sessions":
@@ -242,20 +535,11 @@ def main():
         else:
             display.info("Aucune session sauvegardée.")
 
-    elif cmd == "target":
-        if len(sys.argv) >= 3:
-            target = sys.argv[2]
-            os.environ["HACK_TARGET"] = target
-            session = get_or_create_session(target)
-            display.success(f"Cible définie : {target}")
-        else:
-            display.error("Usage: hack target <ip_ou_domaine>")
-
     else:
         # Mode wrapper — premier arg = outil pentest
         tool = sys.argv[1]
         args = sys.argv[2:]
-        wrapper_mode(tool, args, session)
+        wrapper_mode(tool, args, session, planner)
 
 
 if __name__ == "__main__":

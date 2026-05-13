@@ -5,6 +5,7 @@ from rich.text import Text
 from rich.rule import Rule
 from rich.syntax import Syntax
 from rich import box
+from rich.columns import Columns
 import json
 
 console = Console()
@@ -154,3 +155,106 @@ class Display:
 
     def separator(self):
         console.print(Rule(style="dim"))
+
+    # ─────────────────────────────────────────────
+    # ATTACK PLAN DISPLAY
+    # ─────────────────────────────────────────────
+
+    def plan_generated(self, version: int, threat_level: str, recon_summary: str):
+        """Annonce la génération d'un nouveau plan d'attaque."""
+        threat_colors = {
+            "critical": "bold red",
+            "high": "red",
+            "medium": "yellow",
+            "low": "green",
+            "unknown": "dim"
+        }
+        color = threat_colors.get(threat_level.lower(), "white")
+        title = f"[bold red]PLAN D'ATTAQUE v{version}[/bold red]  [{color}]MENACE : {threat_level.upper()}[/{color}]"
+        console.print(Panel(
+            f"[italic]{recon_summary}[/italic]",
+            title=title,
+            border_style="red",
+            padding=(1, 2)
+        ))
+
+    def plan_table(self, options: list, active_id: str = None):
+        """Affiche le tableau des options A/B/C avec leur statut."""
+        status_styles = {
+            "pending":  ("[dim]○[/dim]",  "dim"),
+            "active":   ("[bold yellow]▶[/bold yellow]", "yellow"),
+            "success":  ("[bold green]✓[/bold green]",  "green"),
+            "failed":   ("[bold red]✗[/bold red]",    "red"),
+        }
+
+        table = Table(
+            title="Options d'attaque",
+            box=box.ROUNDED,
+            border_style="red",
+            show_lines=True
+        )
+        table.add_column("ID",  style="bold",    width=4,  justify="center")
+        table.add_column("",                     width=3,  justify="center")  # icone statut
+        table.add_column("Option",               min_width=18)
+        table.add_column("Objectif",             min_width=25)
+        table.add_column("Statut",               width=10, justify="center")
+        table.add_column("Résultat",            min_width=20, style="dim")
+
+        for opt in options:
+            status = opt.get("status", "pending")
+            icon, row_style = status_styles.get(status, ("○", "dim"))
+            is_active = opt["id"] == active_id
+
+            label = f"[bold yellow]{opt['label']}[/bold yellow]" if is_active else opt["label"]
+            result = opt.get("result_summary") or "—"
+
+            table.add_row(
+                f"[bold]{opt['id']}[/bold]",
+                icon,
+                label,
+                opt.get("objective", ""),
+                f"[{row_style}]{status}[/{row_style}]",
+                result
+            )
+        console.print(table)
+
+    def option_start(self, option: dict):
+        """Annonce le démarrage d'une option."""
+        commands = option.get("commands", [])
+        cmd_lines = "\n".join(
+            f"  [cyan]→[/cyan] {c['cmd']}  [dim]# {c.get('desc', '')}[/dim]"
+            for c in commands
+        )
+        console.print(Panel(
+            f"[bold]Objectif :[/bold] {option['objective']}\n"
+            f"[bold]Pourquoi :[/bold] {option['rationale']}\n\n"
+            f"[bold]Commandes :[/bold]\n{cmd_lines}",
+            title=f"[bold yellow]▶ OPTION {option['id']} — {option['label']}[/bold yellow]",
+            border_style="yellow",
+            padding=(1, 2)
+        ))
+
+    def option_result(self, option: dict, verdict: str, analysis: str):
+        """Affiche le verdict d'analyse après exécution d'une option."""
+        is_success = option.get("status") == "success"
+        color = "green" if is_success else "red"
+        icon  = "✓ SUCCÈS" if is_success else "✗ ÉCHEC"
+        console.print(Panel(
+            analysis,
+            title=f"[bold {color}]{icon} — Option {option['id']} : {option['label']}[/bold {color}]",
+            border_style=color,
+            padding=(1, 2)
+        ))
+
+    def replan_alert(self):
+        """Alerte visuelle quand toutes les options sont épuisées."""
+        console.print(Rule(style="red"))
+        console.print(
+            Panel(
+                "[bold red]Toutes les options ont été épuisées.[/bold red]\n"
+                "[yellow]Analyse globale en cours — génération d'un nouveau plan...[/yellow]",
+                border_style="red",
+                padding=(0, 2)
+            )
+        )
+        console.print(Rule(style="red"))
