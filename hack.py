@@ -201,7 +201,10 @@ def process_output(raw_output: str, command_line: str, session: Session, planner
     if active_option:
         context  = session.get_context_summary() + session.get_plan_status_summary()
         history  = session.get_llm_history()
-        analysis = claude.analyze_step_result(context, active_option, raw_output, history)
+        
+        # Optimisation Coût : DeepSeek résume le log brut pour Claude
+        digest = deepseek.pre_digest(raw_output) if len(raw_output) > 500 else raw_output
+        analysis = claude.analyze_step_result(context, active_option, digest, history)
 
         # Détermine si c'est un succès ou un échec (heuristique simple)
         success_keywords = ["succès", "trouvé", "access", "shell", "credential",
@@ -244,7 +247,9 @@ def _run_standard_analysis(raw_output: str, tool: str, session: Session, extract
     display.analyzing(llm_choice)
 
     if llm_choice == "claude":
-        response = claude.analyze(context, extracted, history)
+        # Optimisation Coût : DeepSeek pré-digère l'output pour Claude
+        digest = deepseek.pre_digest(raw_output) if len(raw_output) > 500 else raw_output
+        response = claude.analyze(context, {"digest": digest, "metadata": extracted}, history)
     else:
         response = deepseek.generate_payloads(context, extracted, history)
 
