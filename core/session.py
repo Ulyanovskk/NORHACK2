@@ -117,16 +117,16 @@ class Session:
 Démarré : {self.data['created_at']}
 
 PORTS OUVERTS ({len(open_ports)}) :
-{chr(10).join(open_ports) if open_ports else 'Aucun encore'}
+{chr(10).join([f"  - {p}" for p in open_ports]) if open_ports else '  Aucun encore'}
 
 VULNÉRABILITÉS TROUVÉES ({len(vulns)}) :
-{chr(10).join([f"[{v['severity'].upper()}] {v['type']} @ {v['location']}" for v in vulns]) if vulns else 'Aucune encore'}
+{chr(10).join([f"  [{v['severity'].upper()}] {v['type']} @ {v['location']}" for v in vulns]) if vulns else '  Aucune encore'}
 
 VECTEURS DÉJÀ TESTÉS :
-{chr(10).join(tested) if tested else 'Aucun encore'}
+{chr(10).join([f"  - {t}" for t in tested]) if tested else '  Aucun encore'}
 
-DERNIERS FINDINGS ({min(3, len(findings))}) :
-{chr(10).join([f"[{f['tool']}] {f['summary']}" for f in findings[-3:]]) if findings else 'Aucun encore'}
+HISTORIQUE DES ACTIONS (10 dernières) :
+{chr(10).join([f"  - [{f['at']}] {f['tool']}: {f['summary']}" for f in findings[-10:]]) if findings else '  Aucune action encore'}
 """
         return summary
 

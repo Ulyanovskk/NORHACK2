@@ -106,8 +106,10 @@ class Analyzer:
             "tool": "nmap",
             "host": host_match.group(1) if host_match else "",
             "os": os_match.group(1) if os_match else "unknown",
-            "ports": ports,
-            "open_count": sum(1 for p in ports if p["state"] == "open")
+            "open_ports": [p for p in ports if p["state"] == "open"],
+            "open_count": sum(1 for p in ports if p["state"] == "open"),
+            "filtered_count": sum(1 for p in ports if p["state"] == "filtered"),
+            "closed_count": sum(1 for p in ports if p["state"] == "closed")
         }
 
     def _extract_gobuster(self, output: str) -> dict:
@@ -118,10 +120,11 @@ class Analyzer:
                 "path": match.group(1),
                 "status": int(match.group(2))
             })
+        interesting = [p for p in paths if p["status"] in [200, 301, 302, 403, 401]]
         return {
             "tool": "gobuster",
-            "paths_found": paths,
-            "interesting": [p for p in paths if p["status"] in [200, 301, 302, 403, 401]]
+            "interesting_paths": interesting[:30],  # Limite à 30 pour économiser les tokens
+            "total_found": len(paths)
         }
 
     def _extract_ffuf(self, output: str) -> dict:
@@ -177,8 +180,13 @@ class Analyzer:
         """
         tool = tool_hint if tool_hint else self.detect_tool(raw_output)
         extracted = self.extract_key_info(raw_output, tool)
+        
+        # Si on a extrait des infos structurées, on réduit drastiquement le raw
+        # pour éviter la redondance dans le prompt LLM
+        clean_raw = raw_output[:1000] if not extracted else "Infos extraites incluses dans le JSON."
+        
         return {
             "tool": tool,
             "extracted": extracted,
-            "raw_truncated": raw_output[:2000]
+            "raw_summary": clean_raw
         }

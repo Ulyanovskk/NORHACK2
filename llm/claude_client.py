@@ -130,7 +130,7 @@ Génère le plan d'attaque RedTeam. Utilise l'outil submit_attack_plan.
             max_tokens=self.max_tokens,
             system=planner_system,
             tools=[self.ATTACK_PLAN_TOOL],
-            tool_choice={"type": "auto"},
+            tool_choice={"type": "tool", "name": "submit_attack_plan"},
             messages=[{"role": "user", "content": user_message}]
         )
         return self._extract_tool_result(response, user_message, planner_system)
@@ -155,7 +155,7 @@ Utilise l'outil submit_attack_plan.
             max_tokens=self.max_tokens,
             system=planner_system,
             tools=[self.ATTACK_PLAN_TOOL],
-            tool_choice={"type": "auto"},
+            tool_choice={"type": "tool", "name": "submit_attack_plan"},
             messages=[{"role": "user", "content": user_message}]
         )
         return self._extract_tool_result(response, user_message, planner_system)

@@ -125,6 +125,22 @@ class Planner:
                 "started_at":      None,
                 "ended_at":        None,
             })
+        
+        # Sécurité : si aucune option n'est générée, on en crée une par défaut
+        if not self.plan["options"]:
+            self.plan["options"].append({
+                "id": "A",
+                "label": "Analyse manuelle requise",
+                "objective": "Identifier manuellement le service SIP",
+                "rationale": "Le service ne répond pas aux probes standard, une interaction manuelle est nécessaire.",
+                "commands": [{"cmd": "nc -v " + self.session.target + " 5060", "desc": "Test de connexion brute"}],
+                "expected_result": "Connexion établie",
+                "fallback_if_fail": "Vérifier le pare-feu",
+                "status": OptionStatus.PENDING,
+                "result_summary": None,
+                "started_at": None,
+                "ended_at": None,
+            })
 
         self.session.save()
 

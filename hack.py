@@ -126,7 +126,7 @@ def _trigger_replan(session: Session, planner: Planner):
 # ANALYSE D'UN OUTPUT D'OUTIL
 # ─────────────────────────────────────────────
 
-def process_output(raw_output: str, tool_hint: str, session: Session, planner: Planner):
+def process_output(raw_output: str, command_line: str, session: Session, planner: Planner):
     """
     Cœur du système :
     1. Détecte l'outil et parse l'output
@@ -135,6 +135,7 @@ def process_output(raw_output: str, tool_hint: str, session: Session, planner: P
     4. Sinon → analyse le résultat dans le contexte du plan actif
     5. Si toutes les options épuisées → re-plan
     """
+    tool_hint = command_line.split()[0] if command_line else ""
     prepared  = analyzer.prepare_for_llm(raw_output, tool_hint)
     tool      = prepared["tool"]
     extracted = prepared["extracted"]
@@ -158,7 +159,7 @@ def process_output(raw_output: str, tool_hint: str, session: Session, planner: P
                     )
 
     elif tool == "gobuster":
-        display.paths_table(extracted.get("interesting", []))
+        display.paths_table(extracted.get("interesting_paths", []))
 
     elif tool == "nuclei":
         display.vulnerabilities_table(extracted.get("findings", []))
@@ -175,9 +176,10 @@ def process_output(raw_output: str, tool_hint: str, session: Session, planner: P
     items = extracted.get("open_ports",
             extracted.get("paths",
             extracted.get("findings", [])))
+    # Enregistre le finding avec la commande réelle
     session.add_finding(
         tool=tool,
-        summary=f"{len(items)} éléments trouvés",
+        summary=f"Cmd: {command_line or tool}",
         raw=raw_output
     )
 
@@ -261,10 +263,11 @@ def wrapper_mode(tool: str, args: list, session: Session, planner: Planner):
 
     try:
         result = subprocess.run(
-            cmd,
+            " ".join([tool] + args),
             capture_output=True,
             text=True,
-            timeout=300
+            timeout=300,
+            shell=True
         )
         raw_output = result.stdout + result.stderr
 
@@ -275,7 +278,8 @@ def wrapper_mode(tool: str, args: list, session: Session, planner: Planner):
         print(raw_output)
         display.separator()
 
-        process_output(raw_output, tool, session, planner)
+        full_cmd = " ".join([tool] + args)
+        process_output(raw_output, full_cmd, session, planner)
 
     except FileNotFoundError:
         display.error(f"Outil '{tool}' introuvable. Vérifie ton PATH.")
