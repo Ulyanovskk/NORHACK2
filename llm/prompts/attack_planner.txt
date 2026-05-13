@@ -15,6 +15,7 @@ TON OUTPUT DOIT ÊTRE STRICTEMENT UN JSON VALIDE, sans texte avant ni après :
     {
       "id": "A",
       "label": "Nom court de l'option",
+      "promise_score": 10,
       "objective": "Ce qu'on cherche à obtenir",
       "rationale": "Pourquoi cette option est prioritaire",
       "commands": [

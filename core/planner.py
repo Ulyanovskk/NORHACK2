@@ -11,6 +11,7 @@ Logique :
 
 from datetime import datetime
 from enum import Enum
+import threading
 
 
 class OptionStatus(str, Enum):
@@ -25,6 +26,7 @@ class Planner:
     Orchestre le plan d'attaque RedTeam.
     Toutes les données sont stockées dans session.data["attack_plan"].
     """
+    _lock = threading.Lock()
 
     def __init__(self, session):
         self.session = session

@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -10,6 +11,7 @@ class Session:
     Stocke tout ce que l'assistant sait sur la cible
     pour enrichir chaque appel LLM avec le contexte complet.
     """
+    _lock = threading.Lock()
 
     def __init__(self, target: str, storage_dir: str = "sessions/"):
         self.target = target
@@ -40,9 +42,10 @@ class Session:
         }
 
     def save(self):
-        self.data["updated_at"] = datetime.now().isoformat()
-        with open(self.session_file, "w") as f:
-            json.dump(self.data, f, indent=2)
+        with self._lock:
+            self.data["updated_at"] = datetime.now().isoformat()
+            with open(self.session_file, "w") as f:
+                json.dump(self.data, f, indent=2)
 
     def add_port(self, port: int, protocol: str, state: str, service: str = "", version: str = ""):
         self.data["ports"][str(port)] = {

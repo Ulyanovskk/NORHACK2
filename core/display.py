@@ -197,8 +197,9 @@ class Display:
             show_lines=True
         )
         table.add_column("ID",  style="bold",    width=4,  justify="center")
-        table.add_column("",                     width=3,  justify="center")  # icone statut
+        table.add_column("",                     width=3,  justify="center")
         table.add_column("Option",               min_width=18)
+        table.add_column("Promesse",             width=10, justify="center")
         table.add_column("Objectif",             min_width=25)
         table.add_column("Statut",               width=10, justify="center")
         table.add_column("Résultat",            min_width=20, style="dim")
@@ -211,10 +212,14 @@ class Display:
             label = f"[bold yellow]{opt['label']}[/bold yellow]" if is_active else opt["label"]
             result = opt.get("result_summary") or "—"
 
+            score = opt.get("promise_score", 0)
+            score_color = "green" if score >= 7 else "yellow" if score >= 4 else "red"
+            
             table.add_row(
                 f"[bold]{opt['id']}[/bold]",
                 icon,
                 label,
+                f"[{score_color}]{score}/10[/{score_color}]",
                 opt.get("objective", ""),
                 f"[{row_style}]{status}[/{row_style}]",
                 result
@@ -247,6 +252,19 @@ class Display:
             title=f"[bold {color}]{icon} — Option {option['id']} : {option['label']}[/bold {color}]",
             border_style=color,
             padding=(1, 2)
+        ))
+
+    def attack_path_graph(self, steps: list):
+        """Affiche un graphique textuel du chemin d'attaque."""
+        if not steps:
+            return
+        
+        path_text = " [bold cyan]→[/bold cyan] ".join(f"[bold yellow]{s}[/bold yellow]" for s in steps)
+        console.print(Panel(
+            path_text,
+            title="[bold red]ATTACK PATH (VULNERABILITY MAPPER)[/bold red]",
+            border_style="red",
+            box=box.HEAVY
         ))
 
     def replan_alert(self):

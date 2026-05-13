@@ -22,6 +22,7 @@ import json
 import argparse
 import threading
 import time
+import shlex
 from dotenv import load_dotenv
 
 try:
@@ -36,14 +37,20 @@ from core.router import Router
 from core.analyzer import Analyzer
 from core.display import Display
 from core.planner import Planner, OptionStatus
+from core.knowledge import KnowledgeBase
+from core.correlator import Correlator
+from core.triggers import TriggerEngine
 from llm.claude_client import ClaudeClient
 from llm.deepseek_client import DeepSeekClient
 
-display  = Display()
-analyzer = Analyzer()
-router   = Router()
-claude   = ClaudeClient()
-deepseek = DeepSeekClient()
+display    = Display()
+analyzer   = Analyzer()
+router     = Router()
+knowledge  = KnowledgeBase()
+correlator = Correlator()
+triggers   = None # Sera initialisé avec la session
+claude     = ClaudeClient()
+deepseek   = DeepSeekClient()
 
 
 # ─────────────────────────────────────────────
@@ -129,14 +136,11 @@ def _trigger_replan(session: Session, planner: Planner):
 # ─────────────────────────────────────────────
 
 def process_output(raw_output: str, command_line: str, session: Session, planner: Planner):
-    """
-    Cœur du système :
-    1. Détecte l'outil et parse l'output
-    2. Met à jour la session (ports, vulns, findings)
-    3. Si scan recon initial → génère le plan A/B/C
-    4. Sinon → analyse le résultat dans le contexte du plan actif
-    5. Si toutes les options épuisées → re-plan
-    """
+    """Analyse le résultat brut et met à jour la session/plan."""
+    global triggers
+    if triggers is None:
+        triggers = TriggerEngine(session)
+    
     tool_hint = command_line.split()[0] if command_line else ""
     prepared  = analyzer.prepare_for_llm(raw_output, tool_hint)
     tool      = prepared["tool"]
@@ -187,16 +191,31 @@ def process_output(raw_output: str, command_line: str, session: Session, planner
 
     display.separator()
 
+    # ── Corrélation Multi-Sources ──
+    alerts = correlator.analyze_session(session.data)
+    for alert in alerts:
+        display.info(f"[bold red]CORRÉLATION : {alert['name']} ({alert['severity']})[/bold red]")
+        display.info(f"  → {alert['reason']}")
+
+    # ── Triggers Automatiques ──
+    auto_cmds = triggers.check_and_trigger(session.data)
+    for ac in auto_cmds:
+        display.info(f"[bold cyan]🤖 Trigger :[/bold cyan] {ac['desc']}")
+        cmd_parts = shlex.split(ac['cmd'])
+        wrapper_mode(cmd_parts[0], cmd_parts[1:], session, planner, background=True)
+
     # ── Logique Plan ──
     active_option = planner.get_active_option()
     is_recon      = _is_recon_tool(tool)
 
     # CAS 1 : Scan recon initial et pas encore de plan → génère le plan
+    # CAS 1 : Scan recon initial et pas encore de plan → génère le plan
     if is_recon and not planner.has_plan():
-        # Analyse standard d'abord
-        _run_standard_analysis(raw_output, tool, session, extracted)
-        display.separator()
-        _trigger_plan_generation(session, planner, extracted)
+        with planner._lock:
+            # Double check inside lock
+            if not planner.has_plan():
+                # Plus d'analyse standard ici, on laisse le planificateur gérer
+                _trigger_plan_generation(session, planner, extracted)
         return
 
     # CAS 2 : Une option est active → analyse le résultat dans ce contexte
@@ -214,24 +233,36 @@ def process_output(raw_output: str, command_line: str, session: Session, planner
         display.analyzing("claude")
         analysis = claude.analyze_step_result(context, active_option, digest, history)
 
-        # Détermine si c'est un succès ou un échec (heuristique simple)
-        success_keywords = ["succès", "trouvé", "access", "shell", "credential",
-                            "injectable", "vulnerable", "valid", "login:", "password:"]
-        fail_keywords    = ["aucun", "nothing", "no result", "failed", "timeout",
-                            "error", "filtered", "closed", "not found"]
-
-        analysis_lower = analysis.lower()
-        is_success = any(k in analysis_lower for k in success_keywords)
-        is_fail    = any(k in analysis_lower for k in fail_keywords)
-
-        if is_success and not is_fail:
+        # Détermine si c'est un succès ou un échec (Verdict Intelligent LLM)
+        verdict = deepseek.analyze_verdict(digest, active_option.get("objective", ""))
+        
+        if verdict.get("status") == "success" and verdict.get("confidence", 0) > 0.6:
             active_option["status"] = OptionStatus.SUCCESS
-        elif is_fail:
+            # Enregistre le succès dans la KnowledgeBase
+            knowledge.record_success(
+                service=active_option.get("label", "Unknown"),
+                version="N/A",
+                exploit_name=verdict.get("reason", "Exploit"),
+                target=session.target
+            )
+        else:
             active_option["status"] = OptionStatus.FAILED
-
+            # Auto-Correction si échec
+            fix = deepseek.suggest_fix(active_option.get("commands", [{}])[0].get("cmd", ""), digest)
+            if fix:
+                display.info(f"[bold yellow]💡 Suggestion de correction :[/bold yellow] {fix.get('error_analysis')}")
+                display.command_suggestion(fix.get("fixed_command"), fix.get("explanation"))
+        
+        active_option["result_summary"] = verdict.get("reason", "Analyse terminée.")
+        
         display.option_result(active_option, "", analysis)
         session.add_to_history("assistant", analysis)
         session.save()
+
+        # Affiche le graphe d'attaque si succès
+        if active_option["status"] == OptionStatus.SUCCESS:
+            path = ["RECON"] + [opt["label"] for opt in planner.data["options"] if opt["status"] == OptionStatus.SUCCESS]
+            display.attack_path_graph(path)
 
         # Affiche le tableau mis à jour
         summary = planner.get_plan_summary()
@@ -249,7 +280,8 @@ def process_output(raw_output: str, command_line: str, session: Session, planner
 def _run_standard_analysis(raw_output: str, tool: str, session: Session, extracted: dict):
     """Analyse LLM standard (routing Claude/DeepSeek)."""
     llm_choice = router.route_auto(raw_output, tool)
-    context    = session.get_context_summary() + session.get_plan_status_summary()
+    # On ajoute l'expérience passée au contexte
+    context    = session.get_context_summary() + session.get_plan_status_summary() + knowledge.get_global_context()
     history    = session.get_llm_history()
 
     if llm_choice == "claude":
@@ -278,11 +310,16 @@ background_jobs = []
 
 def wrapper_mode(tool: str, args: list, session: Session, planner: Planner, background: bool = False):
     """Lance la commande réelle et intercepte l'output."""
+    # S'assure que triggers est lié à la session
+    global triggers
+    if triggers is None:
+        triggers = TriggerEngine(session)
+    
     if background:
         # Lance dans un thread séparé
         t = threading.Thread(
             target=_run_command_thread, 
-            args=(tool, args, session, planner),
+            args=(tool, args, session, planner, True), # Pass background flag
             daemon=True
         )
         t.start()
@@ -293,10 +330,11 @@ def wrapper_mode(tool: str, args: list, session: Session, planner: Planner, back
     _run_command_thread(tool, args, session, planner)
 
 
-def _run_command_thread(tool: str, args: list, session: Session, planner: Planner):
+def _run_command_thread(tool: str, args: list, session: Session, planner: Planner, background: bool = False):
     """Logique d'exécution réelle (synchrone)."""
     cmd_str = " ".join([tool] + args)
-    display.info(f"Lancement : {cmd_str}")
+    if not background:
+        display.info(f"Lancement : {cmd_str}")
 
     try:
         process = subprocess.Popen(
@@ -311,7 +349,8 @@ def _run_command_thread(tool: str, args: list, session: Session, planner: Planne
         
         raw_output = ""
         for line in process.stdout:
-            print(line, end="", flush=True)
+            if not background:
+                display.raw(line.strip())
             raw_output += line
             
         process.wait(timeout=1800)
@@ -410,7 +449,7 @@ def interactive_shell(session: Session, planner: Planner):
             if is_bg:
                 cmd_line = cmd_line[:-1].strip()
             
-            cmd_parts = cmd_line.split()
+            cmd_parts = shlex.split(cmd_line)
             if cmd_parts:
                 wrapper_mode(cmd_parts[0], cmd_parts[1:], session, planner, background=is_bg)
             continue
