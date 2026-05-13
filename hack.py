@@ -23,6 +23,7 @@ import argparse
 import threading
 import time
 import shlex
+import signal
 from dotenv import load_dotenv
 
 try:
@@ -31,6 +32,13 @@ except ImportError:
     pass
 
 load_dotenv()
+
+def signal_handler(sig, frame):
+    """Gère le Ctrl+C de manière globale pour quitter proprement."""
+    print("\n[!] Interruption détectée. Retour au shell système.")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
 
 from core.session import Session
 from core.router import Router
@@ -405,11 +413,12 @@ def interactive_shell(session: Session, planner: Planner):
             opt_label    = f"|opt:{active_opt['id']}" if active_opt else ""
             question     = input(f"\n[norhack][{target_label}{opt_label}]> ").strip()
         except (EOFError, KeyboardInterrupt):
-            print()
-            break
+            print("\n[!] Sortie de NORHACK.")
+            sys.exit(0)
 
         if question.lower() in ["exit", "quit", "q"]:
-            break
+            print("[!] Sortie de NORHACK.")
+            sys.exit(0)
 
         if not question:
             continue
